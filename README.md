@@ -7,7 +7,7 @@ build rather than topping the table.
 
 ## The table
 
-`./build-wsl/matmul --sizes 1024,2048`, all rows PASS, exit 0.
+`./build/matmul --sizes 1024,2048`, all rows PASS, exit 0.
 
 ### N = 1024
 
@@ -191,6 +191,13 @@ cmake --build build -j
 `USE_CUDA` defaults to whether CMake finds a CUDA compiler, so a machine without one
 configures and builds variants 1–5 with no flags. `-DUSE_CUDA=ON` forces it and fails
 loudly if the toolkit is absent.
+
+**Under WSL2, export `LD_LIBRARY_PATH=/usr/lib/wsl/lib` before running.** Ubuntu's
+`nvidia-cuda-toolkit` installs its own `libcuda.so.1` into `/lib/x86_64-linux-gnu`
+alongside the working WSL one, and if the loader picks Ubuntu's the run aborts at the
+first `cudaMalloc` with "no CUDA-capable device is detected" even though `nvidia-smi`
+works. The variants abort there rather than reporting a fast empty result, which is
+the error checking behaving correctly.
 
 Useful flags: `--sizes`, `--reps`, `--budget`, `--only <substring>`, `--csv <path>`.
 `MATMUL_THREADS` overrides the thread count for variant 5.
