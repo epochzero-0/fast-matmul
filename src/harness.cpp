@@ -54,7 +54,9 @@ void aligned_free_floats(float* p) {
 
 struct Args {
   std::vector<int> sizes{256, 512, 1024, 2048};
-  int reps = 7;
+  // A cap, not a target. It is set high enough not to bind at the default
+  // budget; see time_variant for why the budget has to be what decides.
+  int reps = 4096;
   double budget = 2.0;
   std::string only;
   std::string csv;
@@ -124,6 +126,7 @@ std::string fmt_speedup(double naive_median, double this_median) {
 struct TimedResult {
   std::vector<double> reps_seconds;  // every recorded rep, seconds
   double median_seconds = 0.0;
+  double spread_pct = 0.0;  // (max - min) / median, over the recorded reps
 };
 
 double median_of(std::vector<double> v) {
@@ -132,6 +135,19 @@ double median_of(std::vector<double> v) {
   if (n % 2 == 1) return v[n / 2];
   return 0.5 * (v[n / 2 - 1] + v[n / 2]);
 }
+
+// The budget, not the rep cap, decides how long a variant is sampled for.
+//
+// This laptop's clocks move under sustained load, so a median is only meaningful
+// if the reps behind it span enough wall time to average that movement out. With
+// the cap doing the deciding, a variant running at 8 ms/rep was sampled for 7
+// reps = 56 ms -- a single thermal instant -- and five identical runs of v5 at
+// 1024 returned 253, 262, 262, 258 and 339 GFLOP/s. Sampling the same variant
+// for the full 2 s budget instead puts ~250 reps behind the median.
+//
+// Slow variants are unaffected: naive at 2048 blows the budget on its first rep
+// and still stops at kMinReps.
+constexpr int kMinReps = 3;
 
 TimedResult time_variant(const mm::Variant& v, const float* A, const float* B,
                           float* C, int M, int N, int K, int max_reps,
@@ -149,10 +165,15 @@ TimedResult time_variant(const mm::Variant& v, const float* A, const float* B,
     result.reps_seconds.push_back(std::chrono::duration<double>(t1 - t0).count());
 
     double elapsed = std::chrono::duration<double>(t1 - budget_start).count();
-    if (rep + 1 >= 3 && elapsed >= budget_seconds) break;
+    if (rep + 1 >= kMinReps && elapsed >= budget_seconds) break;
   }
 
   result.median_seconds = median_of(result.reps_seconds);
+
+  auto mm_pair = std::minmax_element(result.reps_seconds.begin(),
+                                     result.reps_seconds.end());
+  result.spread_pct =
+      100.0 * (*mm_pair.second - *mm_pair.first) / result.median_seconds;
   return result;
 }
 
@@ -161,6 +182,8 @@ struct RowResult {
   double median_ms;
   double gflops;
   std::string speedup;
+  int reps;
+  double spread_pct;
   bool pass;
 };
 
@@ -173,15 +196,16 @@ int main(int argc, char** argv) {
   std::printf("- compiler: %s\n", compiler_id_version().c_str());
   std::printf("- build flags: %s\n", MATMUL_BUILD_FLAGS);
   std::printf("- seed: 42\n");
-  std::printf("- reps (max): %d\n", args.reps);
-  std::printf("- budget: %.2fs\n", args.budget);
+  std::printf("- statistic: median of the reps taken\n");
+  std::printf("- reps: as many as fit the budget, min %d, cap %d\n", kMinReps, args.reps);
+  std::printf("- budget per variant per size: %.2fs\n", args.budget);
   std::printf("- only filter: %s\n", args.only.empty() ? "(none)" : args.only.c_str());
   std::printf("\n");
 
   std::ofstream csv;
   if (!args.csv.empty()) {
     csv.open(args.csv, std::ios::out | std::ios::trunc);
-    csv << "size,variant,median_ms,gflops,speedup,verify\n";
+    csv << "size,variant,median_ms,gflops,speedup,reps,spread_pct,verify\n";
   }
 
   bool all_pass = true;
@@ -255,6 +279,8 @@ int main(int argc, char** argv) {
       row.name = name;
       row.median_ms = median_ms;
       row.gflops = gflops;
+      row.reps = static_cast<int>(timed.reps_seconds.size());
+      row.spread_pct = timed.spread_pct;
       row.pass = pass;
       rows.push_back(row);
 
@@ -273,17 +299,19 @@ int main(int argc, char** argv) {
               [](const RowResult& a, const RowResult& b) { return a.name < b.name; });
 
     std::printf("## N=%d\n\n", S);
-    std::printf("| Variant | median ms | GFLOP/s | speedup vs naive | verify |\n");
-    std::printf("|---|---|---|---|---|\n");
+    std::printf("| Variant | median ms | GFLOP/s | speedup vs naive | reps | spread | verify |\n");
+    std::printf("|---|---|---|---|---|---|---|\n");
     for (auto& row : rows) {
       std::string speedup = (naive_median > 0.0)
                                  ? fmt_speedup(naive_median, row.median_ms / 1000.0)
                                  : "n/a";
-      std::printf("| %s | %.4f | %.2f | %s | %s |\n", row.name.c_str(), row.median_ms,
-                  row.gflops, speedup.c_str(), row.pass ? "PASS" : "FAIL");
+      std::printf("| %s | %.4f | %.2f | %s | %d | %.1f%% | %s |\n", row.name.c_str(),
+                  row.median_ms, row.gflops, speedup.c_str(), row.reps, row.spread_pct,
+                  row.pass ? "PASS" : "FAIL");
       if (csv.is_open()) {
         csv << S << "," << row.name << "," << row.median_ms << "," << row.gflops << ","
-            << speedup << "," << (row.pass ? "PASS" : "FAIL") << "\n";
+            << speedup << "," << row.reps << "," << row.spread_pct << ","
+            << (row.pass ? "PASS" : "FAIL") << "\n";
       }
     }
     std::printf("\n");
