@@ -55,15 +55,21 @@ target_compile_definitions(matmul PRIVATE
 # Guarded by USE_CUDA (default ON) so -DUSE_CUDA=OFF still configures and
 # builds a working CPU-only binary on a machine with no CUDA toolkit at all.
 if(USE_CUDA)
-  # nvcc on Windows defaults to looking for MSVC's cl.exe as the host
-  # compiler. Point it at the MinGW g++ that is already building the rest
-  # of this project instead.
+  # nvcc needs a host compiler it accepts, and its idea of "accepts" is
+  # narrow: CUDA 12.0 refuses gcc 13+, and on Windows it takes only MSVC.
+  # Default to the compiler building the rest of the project and let the
+  # caller override with -DCMAKE_CUDA_HOST_COMPILER when that is not one
+  # nvcc will tolerate.
   if(NOT CMAKE_CUDA_HOST_COMPILER)
     set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
   endif()
   enable_language(CUDA)
-  set(CMAKE_CUDA_ARCHITECTURES 89)
   target_sources(matmul PRIVATE cuda/v6_naive.cu cuda/v7_tiled.cu cuda/v8_cublas.cu)
+  # Set on the target, not as a bare variable: CMAKE_CUDA_ARCHITECTURES only
+  # seeds the property for targets created after it, and matmul already
+  # exists by this point. As a variable here it silently stays empty and
+  # generation fails with "CUDA_ARCHITECTURES is empty for target".
+  set_target_properties(matmul PROPERTIES CUDA_ARCHITECTURES 89)
   set_source_files_properties(
     cuda/v6_naive.cu cuda/v7_tiled.cu cuda/v8_cublas.cu
     PROPERTIES LANGUAGE CUDA)
