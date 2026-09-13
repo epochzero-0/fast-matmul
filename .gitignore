@@ -1,0 +1,6 @@
+build/
+build-*/
+*.csv
+*.exe
+*.o
+*.obj
