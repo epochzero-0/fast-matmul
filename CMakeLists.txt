@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 project(matmul CXX)
 
+# Default USE_CUDA to whether a usable CUDA compiler actually exists, rather
+# than to ON. Defaulting ON means a plain `cmake -S . -B build` hard-fails on
+# any machine without a toolkit, which is how this broke a build mid-phase.
+# -DUSE_CUDA=ON still forces it and still fails loudly if CUDA is missing,
+# which is what you want when you believe you have it and you do not.
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+  set(MATMUL_CUDA_DEFAULT ON)
+else()
+  set(MATMUL_CUDA_DEFAULT OFF)
+  message(STATUS "No CUDA compiler found; building CPU variants only (v1-v5).")
+endif()
+option(USE_CUDA "Build the CUDA/cuBLAS variants (v6-v8)" ${MATMUL_CUDA_DEFAULT})
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -23,9 +38,8 @@ set(MATMUL_SOURCES
   src/v3_tiled.cpp
   src/v4_simd.cpp
   src/v5_threaded.cpp
-  # v6_cuda_naive.cu  (phase 3, requires enable_language(CUDA) below)
-  # v7_cuda_tiled.cu  (phase 3)
-  # v8_cublas.cu      (phase 3)
+  # CUDA variants (v6-v8) live in cuda/, not here -- see the USE_CUDA-guarded
+  # phase 3 hook below, which adds them via target_sources instead.
 )
 
 add_executable(matmul ${MATMUL_SOURCES})
@@ -37,9 +51,23 @@ string(REPLACE ";" " " MATMUL_BUILD_FLAGS_STR "${MATMUL_RELEASE_FLAGS}")
 target_compile_definitions(matmul PRIVATE
   "MATMUL_BUILD_FLAGS=\"${MATMUL_BUILD_FLAGS_STR}\"")
 
-# --- Phase 3 CUDA hook (do not enable in phase 0) ---------------------------
-# enable_language(CUDA)
-# set(CMAKE_CUDA_ARCHITECTURES 89)
-# target_sources(matmul PRIVATE src/v6_cuda_naive.cu src/v7_cuda_tiled.cu src/v8_cublas.cu)
-# target_link_libraries(matmul PRIVATE cublas)
+# --- Phase 3 CUDA hook -------------------------------------------------------
+# Guarded by USE_CUDA (default ON) so -DUSE_CUDA=OFF still configures and
+# builds a working CPU-only binary on a machine with no CUDA toolkit at all.
+if(USE_CUDA)
+  # nvcc on Windows defaults to looking for MSVC's cl.exe as the host
+  # compiler. Point it at the MinGW g++ that is already building the rest
+  # of this project instead.
+  if(NOT CMAKE_CUDA_HOST_COMPILER)
+    set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
+  endif()
+  enable_language(CUDA)
+  set(CMAKE_CUDA_ARCHITECTURES 89)
+  target_sources(matmul PRIVATE cuda/v6_naive.cu cuda/v7_tiled.cu cuda/v8_cublas.cu)
+  set_source_files_properties(
+    cuda/v6_naive.cu cuda/v7_tiled.cu cuda/v8_cublas.cu
+    PROPERTIES LANGUAGE CUDA)
+  target_compile_definitions(matmul PRIVATE MATMUL_USE_CUDA)
+  target_link_libraries(matmul PRIVATE cublas)
+endif()
 # -----------------------------------------------------------------------------
