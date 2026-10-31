@@ -1,5 +1,7 @@
 # matmul
 
+[![ci](https://github.com/epochzero-0/fast-matmul/actions/workflows/ci.yml/badge.svg)](https://github.com/epochzero-0/fast-matmul/actions/workflows/ci.yml)
+
 One operation — `C = A × B`, row-major float32 — implemented eight times and measured
 by the same harness. Every row below is printed by that harness, and every variant is
 checked against the naive reference on every run, so a fast wrong answer fails the
@@ -191,6 +193,9 @@ cmake --build build -j
 `USE_CUDA` defaults to whether CMake finds a CUDA compiler, so a machine without one
 configures and builds variants 1–5 with no flags. `-DUSE_CUDA=ON` forces it and fails
 loudly if the toolkit is absent.
+
+CI builds the CPU variants and runs the correctness check on every push and pull
+request; the GPU variants are checked by hand, since hosted runners have no GPU.
 
 **Under WSL2, export `LD_LIBRARY_PATH=/usr/lib/wsl/lib` before running.** Ubuntu's
 `nvidia-cuda-toolkit` installs its own `libcuda.so.1` into `/lib/x86_64-linux-gnu`

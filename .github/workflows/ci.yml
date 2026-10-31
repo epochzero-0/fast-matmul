@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cpu-correctness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=OFF
+
+      - name: Build
+        run: cmake --build build -j
+
+      # Correctness gate, not a benchmark: runner timings are noise.
+      # The harness exits 1 if any variant disagrees with the naive reference.
+      - name: Verify variants 1-5
+        run: ./build/matmul --sizes 256,512 --budget 0.2 --csv results.csv
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: results.csv
